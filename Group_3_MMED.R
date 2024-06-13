@@ -1,5 +1,6 @@
 rm(list=ls(all=T))
 library(deSolve) ## differential equation solver library
+load("~/Desktop/WAevddat.Rdata")
 
 ## CONTROL PARAMETERS
 SAVEPLOTS <- FALSE
@@ -11,6 +12,24 @@ if(SAVEPLOTS){
     warning("Figures directory does not exist; plotPath will not be defined, and figures will be plotted but not saved.")
   }
 }
+
+
+# Filter data for Liberia
+Ldistr_liberia <- filter(Ldistr, Country == "Liberia")
+
+# Summarize total and daily cases for Liberia
+Ldistr_liberia_summed <- Ldistr_liberia %>%
+  group_by(date) %>%
+  summarise(total_cases = sum(cases),
+            daily_cases = sum(cases))
+
+
+
+# Sort the data by date
+Ldistr_liberia_summed <- arrange(Ldistr_liberia_summed, date)
+
+Ldistr_liberia_summed$cumulative_cases <- cumsum(Ldistr_liberia_summed$total_cases)
+
 seiarModel <- function(t,y,params){
   with(c(as.list(y),params), {
     N <- S + E + Isurv + Idead + A + R ## Total population size
@@ -33,14 +52,14 @@ R0 <- 2
 N0 <- 4*10^6 ## Liberia's population
 N0K <- N0/10^3 ## population size in thousands
 ## Initialize with one symptomatic infectious individual who will die.
-init <- c(S = N0-1,
+init <- c(S = 4000,
           E = 0,
           Isurv = 0,
           Idead = 1,
           A = 0,
           R = 0,
           cumExp = 0, cumInc = 0, cumMort = 0)
-times<-seq(0,500,1) ## Simulate for 500 days
+times<-seq(0,365,1) ## Simulate for 500 days
 
 param.vals<-c( ## Other parameters
   beta= NA, ## Calculated based on R0 and other parameters, see below.
@@ -68,7 +87,7 @@ runSEIAR <- function(sympProp, paramVals = param.vals, basicReproNum = R0, brows
   print(paste("Calculated beta value for ",sympProp*100,"% symptomatic: ",round(paramVals['beta'],3),".",sep=""))
   tc <- data.frame(lsoda(init, times, seiarModel, paramVals))  ## Run ODE model
   tc$N <-  rowSums(tc[,c('S','E','Isurv','Idead','A','R')])    ## Calculate total population size
-  tc[,-1] <- tc[,-1] / 10^3                                    ## Show numbers (other than time) in thousands
+  tc[,-1] <- tc[,-1]                                    ## Show numbers (other than time) in thousands
   tc$Reff <- R0*(tc$S/tc$N)                                    ## Calculate R_effective
   return(tc)
 }
@@ -97,7 +116,7 @@ tcAsymp[tshow,show]/tcSymp[tshow,show]/tcAsymp1[tshow,show]/tcAsymp2[tshow,show]
 ## applying a correction factor for unreported EVD cases. We set the day in our model closest to this value
 ## to be August 28.
 aug28 <- tcSymp$time[which.min(abs(tcSymp$cumInc*10^3 - 3915))]
-days <- as.Date('2014-08-28') + (tcSymp$time - aug28)
+days <- as.Date('2014-04-28') + (tcSymp$time - aug28)
 tcSymp$days <- tcAsymp$days <- tcAsymp1$days <- tcAsymp2$days <- days ## add calendar days to both modeled time series
 
 
@@ -136,7 +155,7 @@ print(vacc_threshold_Symp_4)
 ####################################################################################################
 
 ## Figure in Lancet letter
-sel <- days > as.Date('2014-09-01') & days < as.Date('2015-01-10')  ## show Sep 2014 - Feb 2015
+sel <- days > as.Date('2014-04-10') & days < as.Date('2015-08-23')  ## show Sep 2014 - Feb 2015
 if(SAVEPLOTS) png(file.path(plotPath, 'rel cumInc 2 panel.png'), w = 4, 5, units='in', res = 300)
 par('ps' = 11, mar = c(4.5, 5, .5, 1), lwd = 2, mgp = c(3, 1, 0), mfrow = c(2, 1))
 ## Comparing cumulative EVD cases with and without accounting for asymptomatic proportion.
@@ -144,7 +163,7 @@ mains <- c("(A) Cumulative # of Cases", '(B) Vaccination Coverage Needed for Eli
 mains <- rep('', 2)
 ## Percent difference in projected cumulative incidence of symptomatic EVD
 ## cases between symptomatic an asymptomatic models (Panel A)
-ylab <- 'Cumulative Cases\n(Thousands)'
+ylab <- 'Cumulative Cases'
 plot(days[sel], tcSymp$cumInc[sel], type = 'n', xlab = '', ylab = ylab, las = 1, main = '', xaxt = 'n')
 mtext(mains[1], side = 3, line = 1)
 lines(days[sel], tcSymp$cumInc[sel], lty = 1, col = "red")
@@ -152,17 +171,45 @@ lines(days[sel], tcAsymp$cumInc[sel], lty = 2, col = "orange")
 lines(days[sel], tcAsymp1$cumInc[sel], lty = 3, col = "blue")
 lines(days[sel], tcAsymp2$cumInc[sel], lty = 4, col = "green")
 
-mth <- seq.Date(as.Date('2014-01-01'), as.Date('2015-02-01'), by = 'month')
-axis.Date(side = 1, at = mth, format = '%b %e', las = 2)
+mth <- seq.Date(as.Date('2014-01-01'), as.Date('2015-08-01'), by = 'month')
+axis.Date(side = 1, at = mth, format = '%b %e, %y', las = 2)
 legend('topleft', legend = paste0(sympVals * 100, '% Symptomatic'), lty = 1:4, col = c("red", "orange", "blue", "green"), bty = 'n', cex = 1, bg = 'white')
+
+# Plot daily cases over time
+points(Ldistr_liberia_summed$date, Ldistr_liberia_summed$cumulative_cases, col = "black", pch = 20)
+
 
 ## Total vaccination coverage needed (Panel B)
 cRange <- seq(0, 1, by = 0.2)
 plot(cRange * N0K, crit(cumIncSymp = cRange*N0K, symp = 1), type = "l", lty = 1, col = "red", ylim = c(0, .5),
-     xlab = "Cumulative Cases\n(Thousands)", ylab = "Target Vaccination \nCoverage")
+     xlab = "Cumulative Cases", ylab = "Target Vaccination \nCoverage")
 lines(cRange * N0K, crit(cumIncSymp = cRange*N0K, symp = 0.8), lty = 2, col = "orange")
 lines(cRange * N0K, crit(cumIncSymp = cRange*N0K, symp = 0.5), lty = 3, col = "blue")
 lines(cRange * N0K, crit(cumIncSymp = cRange*N0K, symp = 0.3), lty = 4, col = "green")
 mtext(mains[2], side = 3, line = 1, at = 0.09 * N0K)
 legend('topright', legend = paste0(sympVals * 100, '% Symptomatic'), lty = 1:4, col = c("red", "orange", "blue", "green"), bty = 'n', cex = 1, bg = 'white')
 if(SAVEPLOTS) graphics.off()
+
+## Plotting (I_surv + I_dead) against time for all levels of symptomatic infections
+plot(days, tcSymp$Isurv + tcSymp$Idead, type = 'l', xlab = 'Time', ylab = 'Infectious Casess', main = 'Infectious Cases vs Time', col = "red", ylim = c(0, max(tcSymp$Isurv + tcSymp$Idead)), xaxt='n')
+
+lines(days, tcAsymp$Isurv + tcAsymp$Idead, type = 'l', col = "orange")
+lines(days, tcAsymp1$Isurv + tcAsymp1$Idead, type = 'l', col = "blue")
+lines(days, tcAsymp2$Isurv + tcAsymp2$Idead, type = 'l', col = "green")
+
+## Customize x-axis labels to show per month
+axis(1, at = seq(as.Date('2014-01-01'), as.Date('2015-12-01'), by = 'month'), labels = format(seq(as.Date('2014-01-01'), as.Date('2015-12-01'), by = 'month'), '%b %Y'), las = 2)
+
+legend("topright", legend = c("100% Symptomatic", "80% Symptomatic", "50% Symptomatic", "30% Symptomatic"), col = c("red", "orange", "blue", "green"), lty = 1, cex = 0.8)
+
+# Plot daily cases over time
+points(Ldistr_liberia_summed$date, Ldistr_liberia_summed$daily_cases, col = "black", pch = 20)
+
+# ## Plotting (I_surv + I_dead) against time for all levels of symptomatic infections
+# plot(days, tcSymp$Isurv + tcSymp$Idead, type = 'l', xlab = 'Time', ylab = 'Infected', main = 'Infected', col = "red", ylim = c(0, max(tcSymp$Isurv + tcSymp$Idead)))
+# 
+# lines(days, tcAsymp$Isurv + tcAsymp$Idead, type = 'l', col = "orange")
+# lines(days, tcAsymp1$Isurv + tcAsymp1$Idead, type = 'l', col = "blue")
+# lines(days, tcAsymp2$Isurv + tcAsymp2$Idead, type = 'l', col = "green")
+# 
+# legend("topright", legend = c("100% Symptomatic", "80% Symptomatic", "50% Symptomatic", "30% Symptomatic"), col = c("red", "orange", "blue", "green"), lty = 1, cex = 0.8)
